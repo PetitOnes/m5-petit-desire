@@ -73,6 +73,26 @@ Run the updater every 5 minutes via cron:
 */5 * * * * cd /path/to/m5-petit-desire && CHARACTER_ID=petit uv run desire-updater
 ```
 
+### rhythm — a desire that resets in the morning and follows the light (optional)
+
+Driving something like sleepiness by "time since the last satisfying memory" makes it return to the ceiling right after waking and peak at noon. Add `rhythm` to a desire and only that desire follows this shape instead (omit it to keep the default behaviour):
+
+```json
+"want_to_sleep": {
+  "name_ja": "眠い",
+  "satisfaction_hours": 8,
+  "keywords": ["おやすみ", "眠った"],
+  "rhythm": {"hours": 14, "dark_x": 2, "bright_x": 0.5, "relief_cap": 0.2, "relief_rate": 0.1}
+}
+```
+
+- **It resets to 0 only in the morning**: after a night's sleep that spanned dark hours, at the first activity in the light
+- **A daytime "good night" is only a rest**: at the next activity the level drops a little, by rest length (`relief_rate` per hour, at most `relief_cap`)
+- **Otherwise it follows the light**: `hours` to reach 1.0 in ordinary light, `dark_x` times faster when dark and still, `bright_x` times when bright. It does not advance while asleep in the dark at night
+- A night without a "good night" memory (4 hours of pitch dark) and a gap of more than 6 hours in the updates also count as a night
+
+Inputs: ambient light and gyro from the sensors; sleep starts from memories containing the `keywords`; optionally the body's `sleep` / `woken` events (`characters/<id>/state/experience/`) and session starts (`.autonomous-logs/<id>/*_stream.jsonl`). State is kept in `characters/<id>/data/desire_rhythm.json`. Sensor effects and cross effects still apply afterwards. See the Japanese README for the parameter table.
+
 ## Environment variables
 
 | Variable | Default | Description |

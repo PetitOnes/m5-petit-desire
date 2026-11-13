@@ -26,6 +26,8 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+import rhythm
+
 load_dotenv()  # カレントディレクトリの .env
 load_dotenv(Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_data"))) / ".env")
 
@@ -61,6 +63,7 @@ class DesireConfig:
     color: str = "#cab8d9"
     base_level: float | None = None
     time_driven: bool = True
+    rhythm: dict[str, Any] | None = None   # あれば、朝に 0 へ戻り光に合わせて進む(rhythm.py)
 
 
 @dataclass
@@ -117,6 +120,7 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
             color=d.get("color", "#cab8d9"),
             base_level=d.get("base_level"),
             time_driven=d.get("time_driven", True),
+            rhythm=d["rhythm"] if isinstance(d.get("rhythm"), dict) else None,
         )
 
     sensor_effects = [
@@ -362,8 +366,13 @@ def compute_desires(
     config: DesireSystemConfig,
     sensor_data: dict[str, Any] | None = None,
     now: datetime | None = None,
+    rhythm_levels: dict[str, float] | None = None,
 ) -> DesireState:
-    """全欲求レベルを3段階で計算してDesireStateを返す。"""
+    """全欲求レベルを3段階で計算してDesireStateを返す。
+
+    rhythm_levels: "rhythm" を持つ欲求の、今回の強さ(update_rhythms() が進めたもの)。
+    あれば Step 1 の時間ベース計算の代わりに使う。
+    """
     if now is None:
         now = datetime.now()
 
@@ -375,6 +384,10 @@ def compute_desires(
     for desire_id, dcfg in config.desires.items():
         labels[desire_id] = dcfg.name_ja
         colors[desire_id] = dcfg.color
+
+        if rhythm_levels is not None and desire_id in rhythm_levels:
+            desires[desire_id] = round(rhythm_levels[desire_id], 3)
+            continue
 
         if not dcfg.time_driven:
             # time_driven: false の欲求は base_level に留まる
@@ -446,6 +459,50 @@ def compute_desires(
 
 
 # ---------------------------------------------------------------------------
+# Rhythm (朝に 0 へ戻り、光に合わせて進む欲求)
+# ---------------------------------------------------------------------------
+
+def update_rhythms(
+    db_path: Path,
+    config: DesireSystemConfig,
+    sensor_data: dict[str, Any] | None,
+    state_path: Path,
+    experience_dir: Path,
+    session_log_dir: Path,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """rhythm を持つ欲求を 1 歩進めて状態を保存し、今回の強さを返す。
+
+    持つ欲求が無ければ何もしない。
+    """
+    targets = {k: d for k, d in config.desires.items() if d.rhythm is not None}
+    if not targets:
+        return {}
+    now = now or datetime.now()
+    states = rhythm.load_states(state_path)
+    levels: dict[str, float] = {}
+    for desire_id, dcfg in targets.items():
+        state = states.get(desire_id)
+        if state is None:
+            # はじめての回は、これまでの計算の値から始める(いきなり 0 に落とさない)
+            start = calculate_desire_level(
+                get_latest_memory_timestamp(db_path, dcfg.keywords), dcfg.satisfaction_hours, now)
+            state = rhythm.RhythmState(level=start)
+        since = datetime.fromisoformat(state.ts) if state.ts else now
+        events = (
+            rhythm.sleep_marks(db_path, dcfg.keywords, since, now)
+            + rhythm.body_events(experience_dir, since, now)
+            + rhythm.session_starts(session_log_dir, since, now)
+        )
+        params = rhythm.RhythmParams.from_dict(dcfg.rhythm)
+        state = rhythm.step(state, params, now, sensor_data or {}, events)
+        states[desire_id] = state
+        levels[desire_id] = state.level
+    rhythm.save_states(state_path, {k: v for k, v in states.items() if k in targets})
+    return levels
+
+
+# ---------------------------------------------------------------------------
 # Save / Load
 # ---------------------------------------------------------------------------
 
@@ -488,7 +545,14 @@ def main() -> None:
 
     config = load_desire_config(CHARACTER_ID)
     sensor_data = fetch_sensor_data(CHARACTER_ID)
-    state = compute_desires(MEMORY_DB_PATH, config, sensor_data)
+    char_dir = DATA_DIR / "characters" / CHARACTER_ID
+    rhythm_levels = update_rhythms(
+        MEMORY_DB_PATH, config, sensor_data,
+        state_path=DESIRES_PATH.parent / "desire_rhythm.json",
+        experience_dir=char_dir / "state" / "experience",
+        session_log_dir=DATA_DIR / ".autonomous-logs" / CHARACTER_ID,
+    )
+    state = compute_desires(MEMORY_DB_PATH, config, sensor_data, rhythm_levels=rhythm_levels)
     save_desires(state)
 
     now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
