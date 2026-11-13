@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-include = ["desire_updater.py", "server.py"]
+include = ["desire_updater.py", "rhythm.py", "server.py"]
 
 [tool.ruff]
 line-length = 100
