@@ -321,3 +321,18 @@ def test_gather_reads_house_events_from_extra_dirs(tmp_path: Path):
 def test_lookback_grows_with_delay():
     assert P.lookback == relief.LOOKBACK
     assert P2.lookback == relief.LOOKBACK + timedelta(minutes=15)
+
+
+def test_floor_keeps_a_valley():
+    """floor を書くと、どれだけ下がっても、それより下には行かない"""
+    p = ReliefParams.from_dict(
+        {"hours": 48, "floor": 0.2, "by": [{"event": "touch", "has": "strokes", "ratio": 0.6}]},
+        default_hours=8,
+    )
+    s = fresh(1.0)
+    for i in range(6):
+        s = step(s, p, after(5 * (i + 1)), [touch(after(5 * i + 1), strokes=1)])
+    assert 0.2 <= s.level < 0.21
+    # はじめから floor より下にいるときは、引き上げない
+    low = step(fresh(0.05), p, after(5), [touch(after(1), strokes=1)])
+    assert low.level < 0.06

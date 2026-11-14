@@ -127,6 +127,7 @@ class Rule:
 class ReliefParams:
     hours: float
     rules: tuple[Rule, ...]
+    floor: float = 0.0  # どれだけ下がっても、これより下には行かない(谷を残す)
 
     @classmethod
     def from_dict(cls, raw: Any, default_hours: float) -> ReliefParams:
@@ -135,7 +136,12 @@ class ReliefParams:
         hours = _num(raw.get("hours"))
         by = raw.get("by") if isinstance(raw.get("by"), list) else []
         rules = tuple(r for r in (Rule.from_dict(x) for x in by) if r is not None)
-        return cls(hours=hours if hours and hours > 0 else default_hours, rules=rules)
+        floor = _num(raw.get("floor")) or 0.0
+        return cls(
+            hours=hours if hours and hours > 0 else default_hours,
+            rules=rules,
+            floor=min(0.9, max(0.0, floor)),
+        )
 
     @property
     def kinds(self) -> set[str]:
@@ -255,7 +261,8 @@ def step(
         if rule.raise_by:
             level = min(1.0, level + _lift(rule, index, new, when, share))
         else:
-            level *= _factor(rule, index, new, when, share)
+            # 下げる決まりは、floor より下には下げない(もう下にいるときは、そのまま)
+            level = min(level, max(params.floor, level * _factor(rule, index, new, when, share)))
     level = min(1.0, level + max(0.0, (now - clock).total_seconds()) / 3600 / params.hours)
     keep_from = now - params.lookback - timedelta(minutes=5)
     new.level = round(level, 4)
