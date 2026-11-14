@@ -129,6 +129,7 @@ cronで5分ごとに更新します。
 ```
 
 - **時間で上がる**。`hours` 時間で上限(1.0)。書かなければ `satisfaction_hours`
+- **`floor` を書くと、どれだけ下がっても、それより下には行かない**(満たされても、谷を残す)
 - **起きたことのたびに、「いまの強さ × `ratio`」だけ下がる**。最初の 1 回がいちばん大きく効き、0 にはならない
 - **`cap` を書いた決まりは、`cap_hours` のうちに下げられる割合が `cap` まで**。短いタッチを何回重ねても、撫でられた 1 回を超えない、という形にできる
 - **5 分ごとの計算のたびに、前の計算から今までの記録を読む**。いつ触られても、次の計算で数える(記録が遅れて書かれる分、10 分さかのぼって読み、同じ出来事は二度数えない)
@@ -144,13 +145,34 @@ cronで5分ごとに更新します。
 | `plain` | `true` なら、`strokes` も `taps` も無い `touch` だけ(種類を返さない体のため) |
 | `min_carried_sec` | `put_down` で、これより短く持たれた分は数えない(机の揺れを入れない) |
 | `cap` / `cap_hours` | この決まりで、`cap_hours`(既定 6)時間のうちに下げられる割合の上限 |
+| `where` | 出来事の中身がこの値のときだけ。`{"cam_to": "<世話人の ID>"}` で「体の設定がその人だったとき」 |
+| `scale_by` / `full_at` / `scale_floor` | 出来事のこの値に合わせて効き方を変える。値が `full_at` 以上で `ratio` どおり、小さければその割合だけ。`scale_floor` は、値が小さい・無いときでも効く割合。「久しぶりに近づいたときほど大きく」に使う |
+| `raise` | `ratio` の代わりに書くと、下げずに上げる決まりになる(足す量)。`cap` は、`cap_hours` のうちに足せる量の上限 |
+| `delay_min` | 起きてからこれだけ間をあけて効かせる |
 
 使うもの:
 
 - 体の出来事の記録(`characters/<id>/state/experience/YYYYMMDD.jsonl`)。無ければ、言葉の決まりだけが効く
+- あれば読むもの: その子と人との接点(`characters/<id>/state/contact/YYYYMMDD.jsonl`)、家の出来事(`state/presence/YYYYMMDD.jsonl`。人感センサーの `arrived` など)。形は体の出来事と同じ 1 行 1 件で、中身は `detail` か同じ段に書く
 - 状態を `characters/<id>/data/desire_relief.json` に持つ。はじめての回は、これまでの計算の値から始まる
 - `rhythm` も書いてある欲求は、`rhythm` で動く
 - センサーの効き方と欲求どうしの効き方は、今までどおり、そのあとに掛かる
+
+気配で動く欲求と、気配のあと少し遅れて上がる欲求の例:
+
+```json
+"miss_companion": {
+  "relief": {"hours": 24, "by": [
+    {"event": "arrived", "ratio": 0.2, "scale_by": "away_min", "full_at": 240, "scale_floor": 0.25, "cap": 0.2, "cap_hours": 12}
+  ]}
+},
+"want_to_talk": {
+  "relief": {"hours": 24, "by": [
+    {"event": "talked", "ratio": 0.7},
+    {"event": "arrived", "raise": 0.1, "delay_min": 15, "cap": 0.3, "cap_hours": 24}
+  ]}
+}
+```
 
 ## 環境変数
 

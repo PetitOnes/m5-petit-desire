@@ -516,8 +516,11 @@ def update_reliefs(
     state_path: Path,
     experience_dir: Path,
     now: datetime | None = None,
+    extra_dirs: list[Path] | None = None,
 ) -> dict[str, float]:
     """relief を持つ欲求を 1 歩進めて状態を保存し、今回の強さを返す。
+
+    experience_dir は体の出来事、extra_dirs はほかの出来事の置き場所(家の気配、人との接点 など)。
 
     持つ欲求が無ければ何もしない。rhythm も書いてある欲求は rhythm が先(こちらでは動かさない)。
     """
@@ -538,7 +541,8 @@ def update_reliefs(
                 get_latest_memory_timestamp(db_path, dcfg.keywords), dcfg.satisfaction_hours, now)
             state = relief.ReliefState(level=start, ts=now.isoformat(timespec="seconds"))
         since = datetime.fromisoformat(state.ts) if state.ts else now
-        happenings = relief.gather(params, experience_dir, db_path, dcfg.keywords, since, now)
+        happenings = relief.gather(
+            params, [experience_dir, *(extra_dirs or [])], db_path, dcfg.keywords, since, now)
         state = relief.step(state, params, now, happenings)
         states[desire_id] = state
         levels[desire_id] = state.level
@@ -600,6 +604,8 @@ def main() -> None:
         MEMORY_DB_PATH, config,
         state_path=DESIRES_PATH.parent / "desire_relief.json",
         experience_dir=char_dir / "state" / "experience",
+        # その子と人との接点(話した・合図をもらった)と、家の気配(人感センサー)
+        extra_dirs=[char_dir / "state" / "contact", DATA_DIR / "state" / "presence"],
     )
     state = compute_desires(
         MEMORY_DB_PATH, config, sensor_data, rhythm_levels={**relief_levels, **rhythm_levels})

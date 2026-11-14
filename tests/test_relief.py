@@ -189,3 +189,150 @@ def test_states_roundtrip(tmp_path: Path):
     assert back.level == s.level
     assert back.applied == s.applied
     assert relief.load_states(tmp_path / "none.json") == {}
+
+
+# ---------------------------------------------------------------------------
+# 中身で効き方を変える(where / scale_by)、間をあけて上げる(raise / delay_min)
+# ---------------------------------------------------------------------------
+
+P2 = ReliefParams.from_dict(
+    {
+        "hours": 48,
+        "by": [
+            {"event": "touch", "has": "strokes", "where": {"cam_to": "keeper"}, "ratio": 0.5},
+            {
+                "event": "arrived",
+                "ratio": 0.2,
+                "scale_by": "away_min",
+                "full_at": 240,
+                "scale_floor": 0.25,
+                "cap": 0.2,
+                "cap_hours": 12,
+            },
+            {"event": "arrived", "raise": 0.1, "delay_min": 15, "cap": 0.3, "cap_hours": 24},
+        ],
+    },
+    default_hours=8,
+)
+
+
+def arrived(at: datetime, away_min: int | None = None) -> Happening:
+    return Happening(
+        at, "arrived", {"place": "つくえ"} if away_min is None else {"away_min": away_min}
+    )
+
+
+def test_where_matches_only_that_setting():
+    mine = touch(after(1), strokes=1, cam_to="keeper")
+    other = Happening(after(1), "touch", {"count": 1, "strokes": 1, "cam_to": "guest"})
+    unknown = touch(after(1), strokes=1)
+    assert 0.49 < step(fresh(1.0), P2, after(5), [mine]).level < 0.51
+    assert step(fresh(1.0), P2, after(5), [other]).level == 1.0
+    assert step(fresh(1.0), P2, after(5), [unknown]).level == 1.0
+
+
+def test_longer_away_counts_more():
+    """久しぶりに近づいたときほど大きく。10 分ぶりは小さく、4 時間ぶりは決まりどおり"""
+    p = ReliefParams.from_dict(
+        {
+            "hours": 48,
+            "by": [{"event": "arrived", "ratio": 0.2, "scale_by": "away_min", "full_at": 240}],
+        },
+        default_hours=8,
+    )
+    short = step(fresh(1.0), p, after(5), [arrived(after(1), 24)]).level
+    long = step(fresh(1.0), p, after(5), [arrived(after(1), 480)]).level
+    assert 0.97 < short < 0.99  # 0.2 × 24/240 = 0.02
+    assert 0.79 < long < 0.81
+
+
+def test_presence_alone_stays_within_its_cap():
+    """気配だけでは、半日のうちに 2 割までしか下がらない"""
+    s = fresh(1.0)
+    for i in range(6):
+        s = step(s, P2, after(60 * i + 5), [arrived(after(60 * i + 1), 600)])
+    assert s.level >= 0.8
+
+
+def test_scale_floor_when_away_time_is_unknown():
+    s = step(fresh(1.0), P2, after(5), [arrived(after(1))])
+    assert 0.94 < s.level < 0.96  # 0.2 × 0.25
+
+
+def test_raise_comes_after_the_delay_and_is_capped():
+    """気配のあと、少し間をあけてから上がる。1 日に上がる量には上限"""
+    p = ReliefParams.from_dict(
+        {
+            "hours": 480,
+            "by": [
+                {"event": "arrived", "raise": 0.1, "delay_min": 15, "cap": 0.25, "cap_hours": 24}
+            ],
+        },
+        default_hours=8,
+    )
+    h = arrived(after(1), 300)
+    s = step(fresh(0.3), p, after(5), [h])
+    assert s.level < 0.31  # まだ間をあけているところ
+    s = step(s, p, after(10), [h])
+    assert s.level < 0.31
+    s = step(s, p, after(20), [h])
+    assert 0.40 < s.level < 0.41  # 15 分たって、ふっと上がる
+    s = step(s, p, after(25), [h])
+    assert 0.40 < s.level < 0.41  # 同じ気配で二度は上がらない
+    for i in range(1, 6):
+        h2 = arrived(after(60 * i), 40)
+        for m in (60 * i + 5, 60 * i + 20):
+            s = step(s, p, after(m), [h2])
+    assert s.level < 0.3 + 0.25 + 0.02  # 何度近づいても、1 日に 0.25 まで
+
+
+def test_lowering_and_delayed_raise_from_one_happening():
+    """1 つの気配で、すぐ少し下がり、あとで少し上がる(番号の違う決まりは別々に数える)"""
+    h = arrived(after(1), 600)
+    s = step(fresh(1.0), P2, after(5), [h])
+    assert 0.79 < s.level < 0.81
+    s2 = step(s, P2, after(20), [h])
+    assert 0.90 < s2.level < 0.91
+
+
+def test_old_done_keys_still_prevent_double_count():
+    """前の版の覚え方(出来事ごと)が残っていても、二度数えない"""
+    h = touch(after(4), strokes=1, cam_to="keeper")
+    s = fresh(0.5)
+    s.done = [h.key]
+    assert step(s, P2, after(5), [h]).level > 0.5
+
+
+def test_gather_reads_house_events_from_extra_dirs(tmp_path: Path):
+    exp, house = tmp_path / "experience", tmp_path / "presence"
+    exp.mkdir()
+    house.mkdir()
+    (house / "20261114.jsonl").write_text(
+        json.dumps(
+            {"ts": "2026-11-14T09:02:00", "type": "arrived", "place": "つくえ", "away_min": 95}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    got = relief.gather(P2, [exp, house, tmp_path / "none"], tmp_path / "none.db", [], T0, after(5))
+    assert [(h.kind, h.detail["away_min"]) for h in got] == [("arrived", 95)]
+
+
+def test_lookback_grows_with_delay():
+    assert P.lookback == relief.LOOKBACK
+    assert P2.lookback == relief.LOOKBACK + timedelta(minutes=15)
+
+
+def test_floor_keeps_a_valley():
+    """floor を書くと、どれだけ下がっても、それより下には行かない"""
+    p = ReliefParams.from_dict(
+        {"hours": 48, "floor": 0.2, "by": [{"event": "touch", "has": "strokes", "ratio": 0.6}]},
+        default_hours=8,
+    )
+    s = fresh(1.0)
+    for i in range(6):
+        s = step(s, p, after(5 * (i + 1)), [touch(after(5 * i + 1), strokes=1)])
+    assert 0.2 <= s.level < 0.21
+    # はじめから floor より下にいるときは、引き上げない
+    low = step(fresh(0.05), p, after(5), [touch(after(1), strokes=1)])
+    assert low.level < 0.06
