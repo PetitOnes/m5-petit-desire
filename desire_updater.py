@@ -26,6 +26,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+import relief
 import rhythm
 
 load_dotenv()  # カレントディレクトリの .env
@@ -64,6 +65,7 @@ class DesireConfig:
     base_level: float | None = None
     time_driven: bool = True
     rhythm: dict[str, Any] | None = None   # あれば、朝に 0 へ戻り光に合わせて進む(rhythm.py)
+    relief: dict[str, Any] | None = None   # あれば、体の出来事や言葉で少しずつ満たされる(relief.py)
 
 
 @dataclass
@@ -121,6 +123,7 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
             base_level=d.get("base_level"),
             time_driven=d.get("time_driven", True),
             rhythm=d["rhythm"] if isinstance(d.get("rhythm"), dict) else None,
+            relief=d["relief"] if isinstance(d.get("relief"), dict) else None,
         )
 
     sensor_effects = [
@@ -370,7 +373,8 @@ def compute_desires(
 ) -> DesireState:
     """全欲求レベルを3段階で計算してDesireStateを返す。
 
-    rhythm_levels: "rhythm" を持つ欲求の、今回の強さ(update_rhythms() が進めたもの)。
+    rhythm_levels: "rhythm" や "relief" を持つ欲求の、今回の強さ
+    (update_rhythms() / update_reliefs() が進めたもの)。
     あれば Step 1 の時間ベース計算の代わりに使う。
     """
     if now is None:
@@ -503,6 +507,46 @@ def update_rhythms(
 
 
 # ---------------------------------------------------------------------------
+# Relief (体の出来事や言葉で、少しずつ満たされる欲求)
+# ---------------------------------------------------------------------------
+
+def update_reliefs(
+    db_path: Path,
+    config: DesireSystemConfig,
+    state_path: Path,
+    experience_dir: Path,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """relief を持つ欲求を 1 歩進めて状態を保存し、今回の強さを返す。
+
+    持つ欲求が無ければ何もしない。rhythm も書いてある欲求は rhythm が先(こちらでは動かさない)。
+    """
+    targets = {
+        k: d for k, d in config.desires.items() if d.relief is not None and d.rhythm is None
+    }
+    if not targets:
+        return {}
+    now = now or datetime.now()
+    states = relief.load_states(state_path)
+    levels: dict[str, float] = {}
+    for desire_id, dcfg in targets.items():
+        params = relief.ReliefParams.from_dict(dcfg.relief, dcfg.satisfaction_hours)
+        state = states.get(desire_id)
+        if state is None:
+            # はじめての回は、これまでの計算の値から始める(いきなり変えない)
+            start = calculate_desire_level(
+                get_latest_memory_timestamp(db_path, dcfg.keywords), dcfg.satisfaction_hours, now)
+            state = relief.ReliefState(level=start, ts=now.isoformat(timespec="seconds"))
+        since = datetime.fromisoformat(state.ts) if state.ts else now
+        happenings = relief.gather(params, experience_dir, db_path, dcfg.keywords, since, now)
+        state = relief.step(state, params, now, happenings)
+        states[desire_id] = state
+        levels[desire_id] = state.level
+    relief.save_states(state_path, {k: v for k, v in states.items() if k in targets})
+    return levels
+
+
+# ---------------------------------------------------------------------------
 # Save / Load
 # ---------------------------------------------------------------------------
 
@@ -552,7 +596,13 @@ def main() -> None:
         experience_dir=char_dir / "state" / "experience",
         session_log_dir=DATA_DIR / ".autonomous-logs" / CHARACTER_ID,
     )
-    state = compute_desires(MEMORY_DB_PATH, config, sensor_data, rhythm_levels=rhythm_levels)
+    relief_levels = update_reliefs(
+        MEMORY_DB_PATH, config,
+        state_path=DESIRES_PATH.parent / "desire_relief.json",
+        experience_dir=char_dir / "state" / "experience",
+    )
+    state = compute_desires(
+        MEMORY_DB_PATH, config, sensor_data, rhythm_levels={**relief_levels, **rhythm_levels})
     save_desires(state)
 
     now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")

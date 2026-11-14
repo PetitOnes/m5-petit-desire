@@ -106,6 +106,52 @@ cronで5分ごとに更新します。
 - 5 分ごとに 1 歩ずつ進むので、状態を `characters/<id>/data/desire_rhythm.json` に持つ。はじめての回は、これまでの計算の値から始まり、次の朝に 0 へ戻る
 - センサーの効き方(電池など)と欲求どうしの効き方は、今までどおり、そのあとに掛かる
 
+### relief — 体の出来事や言葉で、少しずつ満たされる欲求(任意)
+
+「触られたい」のような欲求を「満たした言葉を含む記憶からの時間」で動かすと、言葉を書けば 0 に戻り、体が本当に触られたかは見ません。欲求に `relief` を書くと、その欲求だけ次の形で動きます(書かなければ今までどおり)。
+
+```json
+"want_touch": {
+  "name_ja": "触られたい",
+  "satisfaction_hours": 8,
+  "keywords": ["なでてもらった", "触ってもらった"],
+  "relief": {
+    "hours": 48,
+    "by": [
+      {"event": "touch", "has": "strokes", "ratio": 0.6},
+      {"event": "touch", "has": "taps", "ratio": 0.15, "cap": 0.4, "cap_hours": 6},
+      {"event": "touch", "plain": true, "ratio": 0.3},
+      {"event": "put_down", "min_carried_sec": 5, "ratio": 0.5},
+      {"words": true, "ratio": 0.1, "cap": 0.3, "cap_hours": 12}
+    ]
+  }
+}
+```
+
+- **時間で上がる**。`hours` 時間で上限(1.0)。書かなければ `satisfaction_hours`
+- **起きたことのたびに、「いまの強さ × `ratio`」だけ下がる**。最初の 1 回がいちばん大きく効き、0 にはならない
+- **`cap` を書いた決まりは、`cap_hours` のうちに下げられる割合が `cap` まで**。短いタッチを何回重ねても、撫でられた 1 回を超えない、という形にできる
+- **5 分ごとの計算のたびに、前の計算から今までの記録を読む**。いつ触られても、次の計算で数える(記録が遅れて書かれる分、10 分さかのぼって読み、同じ出来事は二度数えない)
+
+`by` に並べる決まり:
+
+| 項目 | 意味 |
+|---|---|
+| `event` | 体の出来事の種類(experience-daemon の記録の `type`。`touch` / `put_down` など) |
+| `words` | `true` なら、`keywords` を含む記憶が書かれたとき(`event` の代わりに書く) |
+| `ratio` | 1 回で下がる割合(0 より大きく 1 より小さい) |
+| `has` | 出来事の `detail` のこの値が 1 以上のときだけ(`touch` の `strokes` = 撫でられた / `taps` = 短く触られた)。1 件に何回入っていても、下がるのは 1 回分 |
+| `plain` | `true` なら、`strokes` も `taps` も無い `touch` だけ(種類を返さない体のため) |
+| `min_carried_sec` | `put_down` で、これより短く持たれた分は数えない(机の揺れを入れない) |
+| `cap` / `cap_hours` | この決まりで、`cap_hours`(既定 6)時間のうちに下げられる割合の上限 |
+
+使うもの:
+
+- 体の出来事の記録(`characters/<id>/state/experience/YYYYMMDD.jsonl`)。無ければ、言葉の決まりだけが効く
+- 状態を `characters/<id>/data/desire_relief.json` に持つ。はじめての回は、これまでの計算の値から始まる
+- `rhythm` も書いてある欲求は、`rhythm` で動く
+- センサーの効き方と欲求どうしの効き方は、今までどおり、そのあとに掛かる
+
 ## 環境変数
 
 | 変数名 | デフォルト | 説明 |

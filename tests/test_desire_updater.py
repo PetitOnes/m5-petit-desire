@@ -22,6 +22,7 @@ from desire_updater import (
     load_desire_config,
     load_desires,
     save_desires,
+    update_reliefs,
 )
 
 # ---------------------------------------------------------------------------
@@ -491,3 +492,53 @@ class TestSaveAndLoadDesires:
         )
         d = state.to_dict()
         assert "sensor_snapshot" not in d
+
+
+# ---------------------------------------------------------------------------
+# relief(体の出来事や言葉で、少しずつ満たされる欲求)の組み込み
+# ---------------------------------------------------------------------------
+
+def test_update_reliefs_follows_body_records(tmp_path: Path):
+    db = tmp_path / "memory.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE memories (timestamp TEXT, content TEXT)")
+    conn.commit()
+    conn.close()
+    exp = tmp_path / "experience"
+    exp.mkdir()
+    state_path = tmp_path / "data" / "desire_relief.json"
+    config = _make_config(desires={
+        "want_touch": DesireConfig(
+            name_ja="触られたい", description="", satisfaction_hours=8.0, keywords=["なで"],
+            relief={"hours": 48, "by": [{"event": "touch", "has": "strokes", "ratio": 0.6}]},
+        ),
+        "curiosity": DesireConfig(
+            name_ja="知りたい", description="", satisfaction_hours=6.0, keywords=["調べた"]),
+    })
+    t0 = datetime(2026, 11, 14, 9, 0)
+
+    # はじめての回: これまでの計算の値(一度も満たされていない = 1.0)から始まる
+    levels = update_reliefs(db, config, state_path, exp, now=t0)
+    assert levels == {"want_touch": 1.0}
+
+    # 撫でられた記録が増えたら、次の回で下がる
+    (exp / "20261114.jsonl").write_text(json.dumps(
+        {"ts": "2026-11-14T09:02:00", "type": "touch", "detail": {"count": 1, "strokes": 1}}
+    ) + "\n", encoding="utf-8")
+    levels = update_reliefs(db, config, state_path, exp, now=t0 + timedelta(minutes=5))
+    assert 0.39 < levels["want_touch"] < 0.41
+
+    # その値が、欲求の計算にそのまま使われる
+    state = compute_desires(db, config, rhythm_levels=levels, now=t0 + timedelta(minutes=5))
+    assert 0.39 < state.desires["want_touch"] < 0.41
+    assert state.desires["curiosity"] == 1.0
+
+    # 同じ記録を二度数えない
+    levels = update_reliefs(db, config, state_path, exp, now=t0 + timedelta(minutes=10))
+    assert 0.40 < levels["want_touch"] < 0.42
+
+
+def test_update_reliefs_does_nothing_without_relief(tmp_path: Path):
+    state_path = tmp_path / "desire_relief.json"
+    assert update_reliefs(tmp_path / "none.db", _make_config(), state_path, tmp_path) == {}
+    assert not state_path.exists()
