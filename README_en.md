@@ -93,6 +93,10 @@ Driving something like sleepiness by "time since the last satisfying memory" mak
 
 Inputs: ambient light and gyro from the sensors; sleep starts from memories containing the `keywords`; optionally the body's `sleep` / `woken` events (`characters/<id>/state/experience/`) and session starts (`.autonomous-logs/<id>/*_stream.jsonl`). State is kept in `characters/<id>/data/desire_rhythm.json`. Sensor effects and cross effects still apply afterwards. See the Japanese README for the parameter table.
 
+### relief — a desire eased little by little by body events and words (optional)
+
+Add `relief` to a desire (e.g. "wants to be touched") and it rises with time (`hours` to the ceiling) and drops by `level × ratio` each time something listed in `by` happens: a body event recorded by experience-daemon (`{"event": "touch", "has": "strokes", "ratio": 0.6}`, `{"event": "put_down", "min_carried_sec": 5, "ratio": 0.5}`) or a memory containing the `keywords` (`{"words": true, "ratio": 0.1}`). The first one counts most and the level never reaches zero. A rule with `cap` / `cap_hours` can lower the level by at most `cap` within that window, so many short taps never beat one stroke. State is kept in `characters/<id>/data/desire_relief.json`. See the Japanese README for the full table.
+
 ## Environment variables
 
 | Variable | Default | Description |
