@@ -96,26 +96,14 @@ def format_desires(data: dict[str, Any]) -> str:
 
 
 def _build_desire_action_description() -> str:
-    """キャラ固有の欲求名と行動マッピングをツール説明文に自動生成。"""
+    """いまの欲求を見る道具の説明。欲求の名前と一言だけ。
+    どう動くか(0.7 以上なら動く、satisfy_desire で記録、0.5 を下回るまで)は、道具の説明でなく
+    ぷちに渡す文(petit-ones の prompts/autonomous/user.md)に書く(2026-11-16 ありさん)。"""
     config = _load_config()
     if config is None:
-        return (
-            "Get current desire levels. "
-            "Act immediately on any desire with level >= 0.7."
-        )
-
-    parts = ["Get current desire levels. "]
-    parts.append("IMPORTANT: Act immediately on any desire with level >= 0.7. ")
-
-    for did, d in config.desires.items():
-        parts.append(f"{did}({d.name_ja}): {d.description}; ")
-
-    parts.append(
-        "After acting, call satisfy_desire to record satisfaction. "
-        "Keep acting until level drops below 0.5. "
-        "Desires drive behavior - do not just report them."
-    )
-    return "".join(parts)
+        return "いまの欲求の強さ(0〜1)を見る。"
+    names = "、".join(f"{did}({d.name_ja}: {d.description})" for did, d in config.desires.items())
+    return f"いまの欲求の強さ(0〜1)を見る。欲求: {names}"
 
 
 @server.list_tools()
@@ -138,16 +126,15 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="satisfy_desire",
             description=(
-                "Satisfy a desire after taking an action. "
-                "Pass the desire_name you just acted on. "
-                "The level drops by 0.4. Call again if still high."
+                "欲求に沿って動いたあとに呼ぶ。動いた欲求の名前を渡すと、強さが 0.4 下がる。"
+                "まだ強ければもう一度。"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "desire_name": {
                         "type": "string",
-                        "description": f"Name of the desire to satisfy: {desire_names_str}",
+                        "description": f"動いた欲求の名前: {desire_names_str}",
                     },
                 },
                 "required": ["desire_name"],
@@ -155,17 +142,13 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="boost_desire",
-            description=(
-                "Boost a desire level due to novelty/surprise (dopamine/prediction error). "
-                "Call when you feel surprised or encounter unexpected info. "
-                "Simulates dopamine response to novelty."
-            ),
+            description="驚いたとき・思いがけないことに出会ったときに、その欲求を強める(新しさへの反応)。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "desire_name": {
                         "type": "string",
-                        "description": f"Name of the desire to boost: {desire_names_str}",
+                        "description": f"強める欲求の名前: {desire_names_str}",
                     },
                     "amount": {
                         "type": "number",
